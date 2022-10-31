@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# DOCS: https://www.conventionalcommits.org/en/v1.0.0/#summary
+
+if [[ ! $(head -1 $1 | grep -iE "^(build|chore|ci|docs|feat|fix|perf|refactor|style|test)(\(.+\))?: .+$") ]]; then
+  echo "INVALID COMMIT MESSAGE"
+  exit 1
+fi

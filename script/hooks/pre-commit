@@ -1,0 +1,3 @@
+cargo clippy --fix --allow-dirty --allow-staged
+cargo test
+cargo fmt
