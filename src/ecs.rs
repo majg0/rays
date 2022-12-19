@@ -336,7 +336,7 @@ impl EntityStorage for Allocator {
  *****************************************************************************/
 
 pub fn iterate<'a>(s: &'a mut [&'a dyn EntityStorage]) -> Box<dyn Iterator<Item = usize> + 'a> {
-    s.sort_by(|a, b| a.len().cmp(&b.len()));
+    s.sort_by_key(|a| a.len());
     Box::new(
         s[0].entities()
             .filter(|e| s[1..].iter().all(|s| s.contains(*e)))

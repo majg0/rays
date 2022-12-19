@@ -10,19 +10,14 @@ pub struct Renderer {
     pub buf_height: u32,
 }
 
-enum Axis {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
     X = 0,
     Y = 1,
     Z = 2,
 }
-const GRID_SIDE: i32 = 32;
-const GRID_SIDE_F: f64 = GRID_SIDE as f64;
-const GRID_SIDE_2: i32 = GRID_SIDE * GRID_SIDE;
-const GRID_SIDE_3: i32 = GRID_SIDE * GRID_SIDE_2;
 
-type Grid = [bool; GRID_SIDE_3 as usize];
-
-fn ray_box(ray: &Ray) -> Option<(f64, f64, Axis)> {
+fn ray_box(ray: &Ray, side: f64) -> Option<(f64, f64, Axis)> {
     let t_ymin;
     let t_ymax;
     let t_zmin;
@@ -34,18 +29,18 @@ fn ray_box(ray: &Ray) -> Option<(f64, f64, Axis)> {
     let x_inv_dir = 1.0 / ray.direction.x;
     if x_inv_dir >= 0.0 {
         t_min = (-ray.origin.x) * x_inv_dir;
-        t_max = (GRID_SIDE_F - ray.origin.x) * x_inv_dir;
+        t_max = (side - ray.origin.x) * x_inv_dir;
     } else {
-        t_min = (GRID_SIDE_F - ray.origin.x) * x_inv_dir;
+        t_min = (side - ray.origin.x) * x_inv_dir;
         t_max = (-ray.origin.x) * x_inv_dir;
     }
 
     let y_inv_dir = 1.0 / ray.direction.y;
     if y_inv_dir >= 0.0 {
         t_ymin = (-ray.origin.y) * y_inv_dir;
-        t_ymax = (GRID_SIDE_F - ray.origin.y) * y_inv_dir;
+        t_ymax = (side - ray.origin.y) * y_inv_dir;
     } else {
-        t_ymin = (GRID_SIDE_F - ray.origin.y) * y_inv_dir;
+        t_ymin = (side - ray.origin.y) * y_inv_dir;
         t_ymax = (-ray.origin.y) * y_inv_dir;
     }
 
@@ -63,9 +58,9 @@ fn ray_box(ray: &Ray) -> Option<(f64, f64, Axis)> {
     let z_inv_dir = 1.0 / ray.direction.z;
     if z_inv_dir >= 0.0 {
         t_zmin = (-ray.origin.z) * z_inv_dir;
-        t_zmax = (GRID_SIDE_F - ray.origin.z) * z_inv_dir;
+        t_zmax = (side - ray.origin.z) * z_inv_dir;
     } else {
-        t_zmin = (GRID_SIDE_F - ray.origin.z) * z_inv_dir;
+        t_zmin = (side - ray.origin.z) * z_inv_dir;
         t_zmax = (-ray.origin.z) * z_inv_dir;
     }
 
@@ -102,14 +97,9 @@ impl TerrainHit {
     }
 }
 
-fn amanatides_woo(
-    ray: &Ray,
-    t0: f64,
-    t1: f64,
-    grid: &Grid,
-    view_settings: &ViewSettings,
-) -> Option<TerrainHit> {
-    let (mut t_min, mut t_max, mut axis) = ray_box(ray)?;
+fn amanatides_woo(ray: &Ray, t0: f64, t1: f64, model: &Model, view: &View) -> Option<TerrainHit> {
+    let side = model.terrain.side;
+    let (mut t_min, mut t_max, mut axis) = ray_box(ray, side as f64)?;
 
     t_min = t_min.max(t0);
     t_max = t_max.min(t1) - 0.001; // NOTE: the subtraction ensures ending within bounds
@@ -118,9 +108,9 @@ fn amanatides_woo(
     let start = ray.origin + t_min * ray.direction;
     // NOTE: the clamping ensures numerical stability around edges
     let mut i = IVec3::new(
-        (start.x as i32).clamp(0, GRID_SIDE - 1),
-        (start.y as i32).clamp(0, GRID_SIDE - 1),
-        (start.z as i32).clamp(0, GRID_SIDE - 1),
+        (start.x as i32).clamp(0, side - 1),
+        (start.y as i32).clamp(0, side - 1),
+        (start.z as i32).clamp(0, side - 1),
     );
 
     let step_x;
@@ -174,18 +164,23 @@ fn amanatides_woo(
         t_max_z = t_max;
     }
 
-    let mut countdown = view_settings.xray;
-    let mut inside = t < 0.001 && grid[((i.x) + (i.z) * GRID_SIDE + (i.y) * GRID_SIDE_2) as usize];
-    if inside {
+    let mut countdown = view.settings.borrow().xray;
+
+    let mut was_inside = t < 0.001 && model.terrain.block(i) != BlockType::Air;
+    if was_inside {
         // get out first
         countdown += 1;
     }
 
     let mut backup_hit = None;
 
+    let _just_exited = false;
+    let _exit_axis = axis;
+
     while t < t_max {
-        if grid[((i.x) + (i.z) * GRID_SIDE + (i.y) * GRID_SIDE_2) as usize] {
-            if !inside {
+        if model.terrain.block(i) != BlockType::Air {
+            // inside
+            if !was_inside {
                 let p = ray.origin + t * ray.direction;
                 let px = p.x - p.x.floor();
                 let py = p.y - p.y.floor();
@@ -200,12 +195,13 @@ fn amanatides_woo(
                     return backup_hit;
                 }
             }
-            inside = true;
+            was_inside = true;
         } else {
-            if inside && countdown > 0 {
+            // outside
+            if was_inside && countdown > 0 {
                 countdown -= 1;
             }
-            inside = false;
+            was_inside = false;
         }
 
         if t_max_x < t_max_y {
@@ -233,30 +229,29 @@ fn amanatides_woo(
         }
     }
 
-    backup_hit
+    None
+    // backup_hit
 }
 
-const VIEW_DISTANCE: f64 = 16.0;
+const VIEW_DISTANCE: f64 = 64.0;
 
-fn ray_color(r: &Ray, _model: &Model, view_settings: &ViewSettings, grid: &Grid) -> Color {
+fn ray_color(r: &Ray, model: &Model, view: &View) -> Color {
     if let Some(TerrainHit {
         index: i,
         normal,
         t,
         u,
         v,
-    }) = amanatides_woo(r, 0.0, f64::INFINITY, grid, view_settings)
+    }) = amanatides_woo(r, 0.0, f64::INFINITY, model, view)
     {
-        let _diffuse = Color::new(
+        let diffuse = Color::new(
             (i.x % 4) as f64 / 4.0,
             (i.y % 4) as f64 / 4.0,
             (i.z % 4) as f64 / 4.0,
         );
-        let diffuse = Color::new(u, v, 0.0);
-        let _c = lerp(diffuse, normal, 0.5);
-        let c = diffuse;
+        let uv = Color::new(u, v, 0.0);
+        let c = lerp(uv, lerp(normal, diffuse, 0.5), 0.66);
         return (1.0 - t / VIEW_DISTANCE) * c;
-        // return Color::new(0.6, 0.4, 0.2);
     }
 
     lerp(
@@ -283,24 +278,18 @@ impl Renderer {
     }
 
     pub fn render(&mut self, world: &World) {
-        let frame = self.pixels.get_frame();
+        let frame = self.pixels.get_frame_mut();
 
         let wf = 1.0 / f64::from(self.buf_width);
         let hf = 1.0 / f64::from(self.buf_height);
 
         let mp = *world.view.mouse_pos.borrow();
 
-        let mut grid = [false; GRID_SIDE_3 as usize];
-        for (i, item) in grid.iter_mut().enumerate() {
-            *item = i % 7 == 0;
-        }
-
+        let cam = world.view.camera.borrow();
         // render:
         // 1. borrow resources immutably
         // 2. send to n threads for raycasting
         // 3. ask resources for hits
-
-        let view_settings = &world.view.settings.borrow();
 
         // Draw
         frame.par_chunks_mut(4).enumerate().for_each(|(i, pixel)| {
@@ -321,15 +310,14 @@ impl Renderer {
                 }
             }
 
-            let cam = world.view.camera.borrow();
-            let r1 = cam.get_ray(u, v);
-            let r2 = cam.get_ray(u + 0.5 * wf, v);
-            let r3 = cam.get_ray(u, v + 0.5 * hf);
-            let r4 = cam.get_ray(u + 0.5 * wf, v + 0.5 * hf);
-            let c1 = ray_color(&r1, &world.model, view_settings, &grid);
-            let c2 = ray_color(&r2, &world.model, view_settings, &grid);
-            let c3 = ray_color(&r3, &world.model, view_settings, &grid);
-            let c4 = ray_color(&r4, &world.model, view_settings, &grid);
+            let c1 = ray_color(&cam.get_ray(u, v), &world.model, &world.view);
+            let c2 = ray_color(&cam.get_ray(u + 0.5 * wf, v), &world.model, &world.view);
+            let c3 = ray_color(&cam.get_ray(u, v + 0.5 * hf), &world.model, &world.view);
+            let c4 = ray_color(
+                &cam.get_ray(u + 0.5 * wf, v + 0.5 * hf),
+                &world.model,
+                &world.view,
+            );
             let c = 0.25 * (c1 + c2 + c3 + c4);
 
             let rgba = [

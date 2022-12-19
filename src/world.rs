@@ -7,10 +7,11 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(view: View) -> World {
+    pub fn new(model: Model, view: View) -> World {
+        let prev_model = model.clone();
         World {
-            model: Model::default(),
-            prev_model: Model::default(),
+            model,
+            prev_model,
             view,
         }
     }

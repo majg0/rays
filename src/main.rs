@@ -1,21 +1,10 @@
-use std::io::Write;
 use std::time::Instant;
 
-use ron::ser::to_writer;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode};
 use winit::event_loop::EventLoopBuilder;
 use winit::window::WindowBuilder;
 use winit_input_helper::WinitInputHelper;
-
-pub use action::*;
-pub use ecs::*;
-pub use hittable::*;
-pub use math::*;
-pub use model::*;
-pub use system::*;
-pub use view::*;
-pub use world::*;
 
 mod action;
 mod ecs;
@@ -26,8 +15,18 @@ mod system;
 mod view;
 mod world;
 
+pub use action::*;
+pub use ecs::*;
+pub use hittable::*;
+pub use math::*;
+pub use model::*;
+pub use system::*;
+pub use view::*;
+pub use world::*;
+
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 180;
+const SCREEN_SCALING: u32 = 4;
 
 fn main() {
     // Window
@@ -35,7 +34,10 @@ fn main() {
     let elp = event_loop.create_proxy();
     let mut input = WinitInputHelper::new();
     let window = {
-        let size = LogicalSize::new(f64::from(WIDTH) * 2.0, f64::from(HEIGHT) * 2.0);
+        let size = LogicalSize::new(
+            f64::from(WIDTH * SCREEN_SCALING),
+            f64::from(HEIGHT * SCREEN_SCALING),
+        );
         WindowBuilder::new()
             .with_title("Rays")
             .with_inner_size(size)
@@ -43,6 +45,23 @@ fn main() {
             .build(&event_loop)
             .unwrap()
     };
+
+    use noise::NoiseFn;
+    let simplex = noise::Simplex::default();
+
+    let mut terrain = Terrain::new(32);
+    for (i, item) in terrain.blocks.iter_mut().enumerate() {
+        let x = (i & ((1 << 5) - 1)) as f64;
+        let z = ((i >> 5) & ((1 << 5) - 1)) as f64;
+        let y = ((i >> 10) & ((1 << 5) - 1)) as f64;
+        let s = 1.0 / 10.0;
+        let h = simplex.get([x * s, y * s, z * s]);
+        *item = if h > 0.0 {
+            BlockType::Dirt
+        } else {
+            BlockType::Air
+        };
+    }
 
     // World
 
@@ -54,20 +73,23 @@ fn main() {
     // 4. Input mappings for camera controls
 
     let mut world = {
-        let size = window.inner_size();
+        let screen_size = window.inner_size();
 
-        World::new(View::new(
-            Camera::new(
-                Point3::new(2.0, 32.0, 32.0),
-                Point3::new(2.0, 0.0, 0.0),
-                Vec3::new(0.0, 1.0, 0.0),
-                70.0,
-                f64::from(WIDTH) / f64::from(HEIGHT),
+        World::new(
+            Model::new(terrain),
+            View::new(
+                Camera::new(
+                    Point3::new(2.0, 32.0, 32.0),
+                    Point3::new(2.0, 0.0, 0.0),
+                    Vec3::new(0.0, 1.0, 0.0),
+                    70.0,
+                    f64::from(WIDTH) / f64::from(HEIGHT),
+                ),
+                ViewSettings::new(),
+                Renderer::new(&window, WIDTH, HEIGHT).expect("Unable to init Renderer"),
+                Vec2::new(f64::from(screen_size.width), f64::from(screen_size.height)),
             ),
-            ViewSettings::new(),
-            Renderer::new(&window, WIDTH, HEIGHT).expect("Unable to init Renderer"),
-            Vec2::new(f64::from(size.width), f64::from(size.height)),
-        ))
+        )
     };
 
     let mut systems: Vec<Box<dyn System>> = vec![
@@ -81,19 +103,13 @@ fn main() {
     ];
 
     // timing
-    const UPDATE_FPS: f64 = 5.0;
+    const UPDATE_FPS: f64 = 60.0;
     const TIME_STEP: f64 = 1.0 / UPDATE_FPS;
     const SLOWDOWN_FACTOR: f64 = 4.0;
     let mut ticks_simulated: u32 = 0;
     let mut last_updated = Instant::now();
     let mut time_available = 0.0;
     let time_speed = 1.0;
-
-    // logs
-    let mut f_model = std::fs::File::create("log/m.ronlog").unwrap();
-    let mut f_view = std::fs::File::create("log/v.ronlog").unwrap();
-    to_writer(&f_model, &world.model).unwrap();
-    writeln!(f_model).unwrap();
 
     // model
     {
@@ -102,6 +118,7 @@ fn main() {
             position,
             velocity,
             sphere,
+            ..
         } = &mut world.model;
 
         let _cam = entity.alloc();
@@ -217,16 +234,16 @@ fn main() {
 
                     time_available -= TIME_STEP;
                     ticks_simulated += 1;
-                    to_writer(&f_model, &world.model).unwrap();
-                    writeln!(f_model).unwrap();
+                    // to_writer(&f_model, &world.model).unwrap();
+                    // writeln!(f_model).unwrap();
                 }
 
-                let t = time_available / TIME_STEP;
-                let m = world.prev_model.lerp(&world.model, t);
+                // let t = time_available / TIME_STEP;
+                // let m = world.prev_model.lerp(&world.model, t);
 
                 // TODO: "render"
-                to_writer(&f_view, &m).unwrap();
-                writeln!(f_view).unwrap();
+                // to_writer(&f_view, &m).unwrap();
+                // writeln!(f_view).unwrap();
             }
 
             Event::RedrawEventsCleared => {
